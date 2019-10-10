@@ -1,0 +1,166 @@
+
+=== Get the sample application and build it
+
+```
+git clone https://github.com/sqshq/PiggyMetrics
+mvn clean package -DskipTests -f PiggyMetrics/pom.xml
+```
+
+=== Install jQAssistant
+
+```
+curl -O https://jqassistant.org/wp-content/uploads/2018/12/jqassistant-commandline-neo4jv3-1.6.0-distribution.zip
+unzip jqassistant-commandline-neo4jv3-1.6.0-distribution.zip
+mv jqassistant-commandline-neo4jv3-1.6.0 jqassistant
+```
+
+=== Scan the example application
+
+```
+./jqassistant/bin/jqassistant.sh scan -p config/scan.properties -f PiggyMetrics/account-service/target/account-service.jar,PiggyMetrics/auth-service/target/auth-service.jar,PiggyMetrics/notification-service/target/notification-service.jar,PiggyMetrics/statistics-service/target/statistics-service.jar,PiggyMetrics/config/target/config.jar
+```
+
+By default, jQAssistant will create an embedded database, which can be started with
+`./jqassistant/bin/jqassistant.sh server`
+
+If you want to import to you locally running database, add these arguments to the command line when scanning
+`-storeUri bolt://localhost -storeUsername neo4j -storePassword password`
+
+=== Apply some higher level concepts
+
+jQAssistant comes out of the box with some plugins that help us, such as the
+Spring plugin, so we can use it to enrich our existing database
+to create some additional concepts like REST controllers, repositories, etc
+
+```
+./jqassistant/bin/jqassistant.sh analyze -concepts classpath:Resolve -storeUri bolt://localhost -storeUsername neo4j -storePassword password
+./jqassistant/bin/jqassistant.sh analyze -groups spring-boot:Default -storeUri bolt://localhost -storeUsername neo4j -storePassword password
+```
+
+We can explore check spring repositories are present with
+
+```
+MATCH (r:Spring:Repository)
+WHERE r.fqn STARTS WITH 'com'
+RETURN *
+```
+
+We can also for simplicity compute a user friendly artifact name for later use
+
+```
+MATCH (a:Artifact)
+SET a.serviceName = reverse(split(a.fileName, '/'))[0]
+RETURN a
+```
+
+_How can I know the URL prefix of the microservices ?_
+
+In the PiggyMetrics app, we can look at the config service that holds the context path under which
+services are deployed.
+
+```
+MATCH (a:Artifact) WHERE a.fileName contains 'config.jar'
+MATCH (a)-[:CONTAINS]->(f:File:YAML)-[*]->(sn:YAML:Key{fqn:'server.servlet.context-path'})--(val:Value)
+RETURN f.fileName, val.value
+```
+
+Add deployment URL to microservices
+
+see microservices:AddURLInfo rule
+
+Now we can link clients to endpoints
+
+see microservices:LinkClientsAndEndpoints
+
+Visualize deps between services
+
+```
+MATCH (sa:Artifact)--(caller:Type)--(client)-[:INVOKES_REMOTE]->(endpoint:Endpoint)--(ctrl:Type)--(ta:Artifact)
+RETURN *
+```
+
+=== Documentation
+
+Let's add some sample documentation to the application (it has no doc out of the box)
+
+`cp test-files/api-docs.yml PiggyMetrics/statistics-service/src/main/resources`
+
+and rebuild the services and rescan the app as done before
+
+Now we can check if my services have some documentation
+
+_Do the services have api specifications?_
+
+```
+MATCH (a:Artifact)
+OPTIONAL MATCH (a)-[:CONTAINS]->(f:File)--(doc:Document:YAML)--(key:Key{name:'openapi'})
+RETURN distinct a.serviceName, f.fileName
+```
+
+_Extract endpoints and parameters from apidoc_
+
+MATCH (a:Artifact)-[:CONTAINS]->(f:File)--(doc:Document:YAML)--(key:Key{name:'openapi'})
+MATCH (doc)-->(:Key{name:'paths'})-->(path:Key)--(method:Key)
+OPTIONAL MATCH (method)-[*2]-(:Key{name:'name'})--(val:Value)
+RETURN path.name, method.name, collect(val.value) as params
+
+_Get the controller parameters and return values_
+
+MATCH (ep:Endpoint)-[:RETURNS]->(returnType:Type)
+OPTIONAL MATCH (ep)-[:HAS]->(param:Parameter)-[:ANNOTATED_BY]->(:Annotation)
+OPTIONAL MATCH (param)-[:OF_TYPE]->(type:Type)
+RETURN ep.fullUrl, ep.method, count(param), collect(type.name)
+
+=== Fallbacks
+
+_Do my HTTP clients declare fallbacks?_
+
+```
+MATCH (client:Interface)-[:ANNOTATED_BY]->(a)-[:OF_TYPE]->(t:Type{fqn:"org.springframework.cloud.openfeign.FeignClient"})
+OPTIONAL MATCH (a)-[:HAS]-(v:Value{name:'fallback'})--(fb:Type)
+RETURN client.fqn as client, fb.fqn as fallback
+```
+
+=== Shared Repositories
+
+run query defined in [[microservices:MarkMongoEntities]]
+
+_Which collections are used by service?_
+
+```
+MATCH (entity:MongoDb:Class)--(a:Artifact)
+RETURN entity.fqn as class, entity.collectionName as collection, a.serviceName as usedBy
+ORDER by collection
+```
+
+Resolve interface/dependency method invocation info missing by adding `VIRTUAL_INVOKES` rels
+
+```
+MATCH (itf:Interface)<-[:IMPLEMENTS]-(impl:Type)
+MATCH (itf)-[:DECLARES]->(m1:Method)
+MATCH (impl)-[:DECLARES]->(m2:Method)
+WHERE itf.fqn STARTS WITH 'com.piggy'
+AND m1.signature = m2.signature
+MERGE (m1)-[:VIRTUAL_INVOKES]-(m2)
+RETURN m1.signature, m2.signature
+```
+
+```
+MATCH p=(ep:Endpoint)-[:INVOKES|VIRTUAL_INVOKES*..10]->(m)<--(r:Repository)
+RETURN ep.fullUrl, ep.method, collect(r.name+'::'+m.signature)
+ORDER BY ep.fullUrl
+```
+
+```
+MATCH p=(ep:Endpoint)-[:INVOKES|VIRTUAL_INVOKES*..10]->(m)<--(r:Repository)
+RETURN r.name, m.signature, collect(ep.method +' '+ ep.fullUrl) as endpoints
+ORDER BY r.name
+```
+
+_Endpoints using repository methods_
+
+```
+MATCH p=(ep:Endpoint)-[:INVOKES|VIRTUAL_INVOKES|INVOKES_REMOTE*]->(m)<--(r:Repository)
+RETURN r.name, m.signature, collect(ep.method +' '+ ep.fullUrl) as usedBy
+ORDER BY r.name
+```

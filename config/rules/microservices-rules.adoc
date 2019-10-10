@@ -1,0 +1,107 @@
+= Rules
+
+[[microservices:Default]]
+[role="group",includesConcepts="classpath:Resolve,microservices:LinkFeignToEndpoints,microservices:TablesAndLinksToDaoMethods"]
+== Default Rules
+
+== Concepts
+
+[[microservices:Endpoint]]
+.Tags spring controller methods with the `Endpoint` concept, and adds URL and HTTP method information.
+[source,cypher,role=concept]
+----
+MATCH (cls:Class)-[:DECLARES]->(endpoint)-[:ANNOTATED_BY]->(ann:Annotation)-[:OF_TYPE]->(:Type{name:"RequestMapping"})
+  WHERE cls.fqn starts with 'com.'
+OPTIONAL MATCH (ann)-[:HAS]->(:Value{name:"value"})-[:CONTAINS]->(url:Value)
+OPTIONAL MATCH (ann)-[:HAS]->(:Value{name:"path"})-[:CONTAINS]->(path:Value)
+OPTIONAL MATCH (ann)-[:HAS]->(:Value{name:"method"})-[:CONTAINS]->()-[:IS]->(httpMethod:Field)
+OPTIONAL MATCH (cls)-[:ANNOTATED_BY]->(classMapping:Annotation)-[:OF_TYPE]->(Type{name:"RequestMapping"}),(classMapping)-[:HAS]->(:Value{name:"value"})-[:CONTAINS]->(classLevelUrl:Value)
+SET endpoint:Endpoint
+SET endpoint.method=split(httpMethod.signature, " ")[1]
+SET endpoint.url=coalesce(classLevelUrl.value, '') + coalesce(url.value, '') + coalesce(path.value, '')
+RETURN cls.fqn, endpoint.url, endpoint.method
+----
+
+[[microservices:FeignClients]]
+.Tags service client methods with the `FeignMethod` concept, and adds URL and HTTP method information.
+[source,cypher,role=concept]
+----
+MATCH (client:Interface)-[:DECLARES]->(m:Method)
+  WHERE client.fqn STARTS WITH "com."
+  AND (client)-[:ANNOTATED_BY]->()-[:OF_TYPE]->(:Type{fqn:"org.springframework.cloud.openfeign.FeignClient"})
+MATCH (m)-[:ANNOTATED_BY]->(ann:Annotation)-[:HAS]->(:Value{name:"value"})-[:CONTAINS]->(url:Value)
+MATCH (m)-[:ANNOTATED_BY]->(ann:Annotation)-[:HAS]->(:Value{name:"method"})-[:CONTAINS]->()-[:IS]->(httpMethod:Field)
+SET m:FeignClient
+SET m.url = apoc.text.regreplace(url.value, '\\{.*\\}', '{}')
+SET m.httpMethod = split(httpMethod.signature, ' ')[1]
+return m.name, m.httpMethod, m.url
+----
+
+[[microservices:AddURLInfo]]
+.Enriches the endpoints URLs with the deployment URLs parts of the services.
+//This looks up the context path under which the services are deployed (in YAML configuration files located
+//in the config service)
+//and matches them with the correct controllers.
+[source,cypher,role=concept,requiresConcepts="microservices:Endpoint"]
+----
+MATCH (configJar:Artifact) WHERE configJar.fileName CONTAINS 'config.jar'
+MATCH (configJar)-[:CONTAINS]->(f:File:YAML)-[*]->(k:YAML:Key{fqn: 'server.servlet.context-path'})--(path:Value)
+WITH reverse(split(replace(f.fileName, '.yml', ''), '/'))[0] as serviceName, path.value as urlPrefix
+MATCH (serviceJar:Artifact)-[*]->(sn:YAML:Key{fqn: 'spring.application.name'})--(appName:Value)
+WHERE appName.value = serviceName
+MATCH (serviceJar)-[:CONTAINS|DECLARES*..2]->(endpoint:Endpoint)
+SET endpoint.fullUrl = urlPrefix + apoc.text.regreplace(endpoint.url, '\\{.*\\}', '{}')
+RETURN distinct serviceName, endpoint.url, endpoint.fullUrl
+----
+
+[[microservices:LinkClientsAndEndpoints]]
+.Creates a relationship between the services and their clients based on URLs and HTTP methods.
+[source,cypher,role=concept,requiresConcepts="microservices:AddURLInfo,microservices:FeignClients"]
+----
+MATCH (client:FeignClient), (endpoint:Endpoint)
+WHERE client.url=endpoint.fullUrl AND client.httpMethod=endpoint.method
+MERGE (client)-[:INVOKES_REMOTE]->(endpoint)
+RETURN client.url, endpoint.fullUrl
+----
+
+[[microservices:MarkMongoEntities]]
+.Applies `Entity` and `MongoDb` labels on mongo entities, adds the `collectionName` on the entity.
+[source,cypher,role=concept]
+----
+MATCH (entity:Type)-[:ANNOTATED_BY]->(ann:Annotation)
+MATCH (ann)-[:OF_TYPE]-(:Type{fqn:'org.springframework.data.mongodb.core.mapping.Document'})
+MATCH (ann)-[:HAS]->(collection:Value{name:"collection"})
+SET entity:Entity:MongoDb
+SET entity.collectionName=collection.value
+RETURN entity.fqn
+----
+
+== reports
+
+[[dependencyReport.graphml]]
+.Creates a GraphML report for artifact dependencies.
+[source,cypher,role=concept,requiresConcepts="microservices:LinkClientsAndEndpoints"]
+----
+MATCH (source:Artifact)-[*]->(c:FeignClient)
+MATCH (c)-[:INVOKES_REMOTE]->(:Endpoint)<-[*]-(target:Artifact)
+RETURN distinct source,
+    { role: "relationship", type: "DEPENDS_ON",
+        startNode: source, endNode: target, properties: {test: "blah"}
+    } as rel, target
+----
+
+[[dependencyReport2.graphml]]
+.Creates a GraphML report for artifact dependencies.
+[source,cypher,role=concept,requiresConcepts="microservices:LinkClientsAndEndpoints"]
+----
+MATCH (a:Artifact)-[*]->(fi:Interface)-[:DECLARES]->(fm:FeignClient)-[:INVOKES_REMOTE]->(:Endpoint)<-[:DECLARES]-(cser:Class)<-[:CONTAINS]- (ser:Artifact)
+WHERE a.fileName is not null
+RETURN distinct {role:"node", labels:["Artifact"], properties:{text:"coucou"}},
+    {
+        role: "relationship",
+        type: "DEPENDS_ON",
+        startNode: {role:"node", labels:["Artifact"], properties:{text:"coucou"}},
+        endNode: ser,
+        properties: {test: "blah"}
+    } as rel, ser
+----

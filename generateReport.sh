@@ -1,0 +1,1 @@
+./jqassistant/bin/jqassistant.sh analyze -concepts dependencyReport.graphml -executeAppliedConcepts -r config/rules -storeUri bolt://localhost -storeUsername neo4j -storePassword password
