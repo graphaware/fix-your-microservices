@@ -1,0 +1,215 @@
+﻿node {
+  diameter: 50px;
+  color: #A5ABB6;
+  border-color: #9AA1AC;
+  border-width: 2px;
+  text-color-internal: #FFFFFF;
+  font-size: 10px;
+}
+relationship {
+  color: #A5ABB6;
+  shaft-width: 1px;
+  font-size: 8px;
+  padding: 3px;
+  text-color-external: #000000;
+  text-color-internal: #FFFFFF;
+  caption: "<type>";
+}
+node.Java {
+  defaultCaption: "<id>";
+  caption: "{name}";
+  color: #569480;
+  border-color: #447666;
+  text-color-internal: #FFFFFF;
+}
+node.ByteCode {
+  defaultCaption: "<id>";
+  caption: "{name}";
+  color: #DA7194;
+  border-color: #cc3c6c;
+  text-color-internal: #FFFFFF;
+}
+node.Artifact {
+  color: #F16667;
+  border-color: #eb2728;
+  text-color-internal: #FFFFFF;
+  defaultCaption: "<id>";
+  caption: "{serviceName}";
+}
+node.Method {
+  color: #FFC454;
+  border-color: #d7a013;
+  text-color-internal: #604A0E;
+  defaultCaption: "<id>";
+}
+node.Endpoint {
+  defaultCaption: "<id>";
+  color: #57C7E3;
+  border-color: #23b3d7;
+  text-color-internal: #FFFFFF;
+  diameter: 80px;
+  caption: "{fullUrl}";
+}
+relationship.INVOKES_REMOTE {
+  shaft-width: 5px;
+  color: #4C8EDA;
+  border-color: #2870c2;
+  text-color-internal: #FFFFFF;
+}
+node.Key {
+  caption: "{name}";
+}
+node.YAML {
+  defaultCaption: "<id>";
+}
+node.Value {
+  defaultCaption: "<id>";
+  caption: "{value}";
+}
+node.Annotation {
+  defaultCaption: "<id>";
+  color: #8DCC93;
+  border-color: #5db665;
+  text-color-internal: #604A0E;
+}
+node.* {
+  color: #8DCC93;
+  border-color: #5db665;
+  text-color-internal: #604A0E;
+  defaultCaption: "<id>";
+}
+node.File {
+  color: #ECB5C9;
+  border-color: #da7298;
+  text-color-internal: #604A0E;
+  defaultCaption: "<id>";
+  caption: "{fileName}";
+}
+node.Zip {
+  color: #4C8EDA;
+  border-color: #2870c2;
+  text-color-internal: #FFFFFF;
+  defaultCaption: "<id>";
+}
+node.Archive {
+  color: #DA7194;
+  border-color: #cc3c6c;
+  text-color-internal: #FFFFFF;
+  defaultCaption: "<id>";
+}
+node.Jar {
+  color: #F16667;
+  border-color: #eb2728;
+  text-color-internal: #FFFFFF;
+  defaultCaption: "<id>";
+  caption: "{serviceName}";
+  diameter: 65px;
+}
+node.Variable {
+  defaultCaption: "<id>";
+}
+node.Type {
+  defaultCaption: "<id>";
+  color: #4C8EDA;
+  border-color: #2870c2;
+  text-color-internal: #FFFFFF;
+  diameter: 80px;
+  caption: "{name}";
+}
+node.Interface {
+  defaultCaption: "<id>";
+}
+node.Class {
+  defaultCaption: "<id>";
+}
+node.Constructor {
+  defaultCaption: "<id>";
+}
+node.Member {
+  defaultCaption: "<id>";
+}
+node.Field {
+  defaultCaption: "<id>";
+}
+node.Application {
+  defaultCaption: "<id>";
+}
+node.Boot {
+  defaultCaption: "<id>";
+}
+node.Component {
+  defaultCaption: "<id>";
+}
+node.Configuration {
+  defaultCaption: "<id>";
+}
+node.Spring {
+  defaultCaption: "<id>";
+}
+node.Injectable {
+  defaultCaption: "<id>";
+}
+node.Repository {
+  defaultCaption: "<id>";
+}
+node.Primitive {
+  defaultCaption: "<id>";
+}
+node.Directory {
+  defaultCaption: "<id>";
+}
+node.Package {
+  defaultCaption: "<id>";
+}
+node.Service {
+  defaultCaption: "<id>";
+}
+node.Entity {
+  defaultCaption: "<id>";
+}
+node.MongoDb {
+  defaultCaption: "<id>";
+  color: #C990C0;
+  border-color: #b261a5;
+  text-color-internal: #FFFFFF;
+}
+node.Parameter {
+  defaultCaption: "<id>";
+}
+node.Enum {
+  defaultCaption: "<id>";
+}
+node.FeignClient {
+  defaultCaption: "<id>";
+  diameter: 65px;
+  color: #D9C8AE;
+  border-color: #c0a378;
+  text-color-internal: #604A0E;
+}
+relationship.INVOKES {
+  color: #F79767;
+  border-color: #f36924;
+  text-color-internal: #FFFFFF;
+  shaft-width: 2px;
+}
+node.Controller {
+  defaultCaption: "<id>";
+}
+node.Array {
+  defaultCaption: "<id>";
+}
+node.Document {
+  defaultCaption: "<id>";
+}
+node.Maven {
+  defaultCaption: "<id>";
+}
+node.Test {
+  defaultCaption: "<id>";
+}
+node.Concept {
+  caption: "{id}";
+}
+node.Microservice {
+  defaultCaption: "<id>";
+}
