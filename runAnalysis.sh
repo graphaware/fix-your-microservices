@@ -1,0 +1,1 @@
+./jqassistant/bin/jqassistant.sh analyze -groups microservices:Default -executeAppliedConcepts -failOnSeverity blocker -r config -storeUri bolt://localhost -storeUsername neo4j -storePassword password

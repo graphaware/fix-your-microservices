@@ -1,0 +1,218 @@
+
+[[microservices:Default]]
+[role="group",includesGroups="spring-boot:Default",includesConcepts="classpath:Resolve,microservices:LinkClientsAndEndpoints,microservices:MarkMongoEntities"]
+
+=== Apply some higher level concepts
+
+Create the microservice concept and compute a user friendly artifact name for it
+
+[[microservices:TagServices]]
+[source,cypher,role=concept]
+.Tags jars containing REST controllers as microservices
+----
+MATCH (a:Artifact)--(cls:Class)-[:ANNOTATED_BY]->(ann:Annotation)-[:OF_TYPE]->(:Type{name:"RestController"})
+SET a:Microservice
+SET a.serviceName = reverse(split(a.fileName, '/'))[0]
+RETURN a
+----
+
+[[microservices:Endpoint]]
+.Tags spring controller methods with the `Endpoint` concept, and adds URL and HTTP method information
+[source,cypher,role=concept]
+----
+MATCH (cls:Class)-[:DECLARES]->(endpoint)-[:ANNOTATED_BY]->(ann:Annotation)-[:OF_TYPE]->(:Type{name:"RequestMapping"})
+  WHERE cls.fqn starts with 'com.'
+OPTIONAL MATCH (ann)-[:HAS]->(:Value{name:"value"})-[:CONTAINS]->(url:Value)
+OPTIONAL MATCH (ann)-[:HAS]->(:Value{name:"path"})-[:CONTAINS]->(path:Value)
+OPTIONAL MATCH (ann)-[:HAS]->(:Value{name:"method"})-[:CONTAINS]->()-[:IS]->(httpMethod:Field)
+OPTIONAL MATCH (cls)-[:ANNOTATED_BY]->(classMapping:Annotation)-[:OF_TYPE]->(Type{name:"RequestMapping"}),(classMapping)-[:HAS]->(:Value{name:"value"})-[:CONTAINS]->(classLevelUrl:Value)
+SET endpoint:Endpoint
+SET endpoint.method=split(httpMethod.signature, " ")[1]
+SET endpoint.url=coalesce(classLevelUrl.value, '') + coalesce(url.value, '') + coalesce(path.value, '')
+RETURN cls.fqn, endpoint.url, endpoint.method
+----
+
+NOTE: Notice that the URL can come from both class level and method level RequestMapping
+
+[[microservices:FeignClients]]
+.Tags service client methods with the `FeignMethod` concept, and adds URL and HTTP method information
+[source,cypher,role=concept]
+----
+MATCH (client:Interface)-[:DECLARES]->(m:Method)
+  WHERE client.fqn STARTS WITH "com."
+  AND (client)-[:ANNOTATED_BY]->()-[:OF_TYPE]->(:Type{fqn:"org.springframework.cloud.openfeign.FeignClient"})
+MATCH (m)-[:ANNOTATED_BY]->(ann:Annotation)-[:HAS]->(:Value{name:"value"})-[:CONTAINS]->(url:Value)
+MATCH (m)-[:ANNOTATED_BY]->(ann:Annotation)-[:HAS]->(:Value{name:"method"})-[:CONTAINS]->()-[:IS]->(httpMethod:Field)
+SET m:FeignClient
+SET m.url = apoc.text.regreplace(url.value, '\\{.*\\}', '{}')
+SET m.httpMethod = split(httpMethod.signature, ' ')[1]
+return m.name, m.httpMethod, m.url
+----
+
+Our services are deployed under a specific URL defined in the config service (in YAML configuration files).
+So we need to add this to our controllers this part of the path to get the full URL
+
+[[microservices:AddURLInfo]]
+.Enriches the endpoints URLs with the deployment URLs parts of the services
+[source,cypher,role=concept,requiresConcepts="microservices:Endpoint"]
+----
+MATCH (configJar:Artifact) WHERE configJar.fileName CONTAINS 'config.jar'
+MATCH (configJar)-[:CONTAINS]->(f:File:YAML)-[*]->(k:YAML:Key{fqn: 'server.servlet.context-path'})--(path:Value)
+WITH reverse(split(replace(f.fileName, '.yml', ''), '/'))[0] as serviceName, path.value as urlPrefix
+MATCH (serviceJar:Artifact)-[*]->(sn:YAML:Key{fqn: 'spring.application.name'})--(appName:Value)
+WHERE appName.value = serviceName
+MATCH (serviceJar)-[:CONTAINS|DECLARES*..2]->(endpoint:Endpoint)
+SET endpoint.fullUrl = urlPrefix + apoc.text.regreplace(endpoint.url, '\\{.*\\}', '{}')
+RETURN distinct serviceName, endpoint.url, endpoint.fullUrl
+----
+
+Now we have a the Endpoint and FeignClient concepts, we can link them together
+
+[[microservices:LinkClientsAndEndpoints]]
+.Creates a relationship between the services and their clients based on URLs and HTTP methods
+[source,cypher,role=concept,requiresConcepts="microservices:AddURLInfo,microservices:FeignClients"]
+----
+MATCH (client:FeignClient), (endpoint:Endpoint)
+WHERE client.url=endpoint.fullUrl AND client.httpMethod=endpoint.method
+MERGE (client)-[:INVOKES_REMOTE]->(endpoint)
+RETURN client.url, endpoint.fullUrl
+----
+
+Now we can do cross service dependency analysis with:
+
+[source,cypher]
+----
+MATCH (sa:Artifact)-[:CONTAINS]-(caller:Type)-[:DECLARES]-(client)-[:INVOKES_REMOTE]->(endpoint:Endpoint)
+MATCH (endpoint)-[:DECLARES]-(ctrl:Type)-[:CONTAINS]-(ta:Artifact)
+RETURN *
+----
+
+=== Interface / implementation missing links
+
+To go further in the analysis, we need to interface/dependency method invocation info missing by adding `VIRTUAL_INVOKES` rels
+
+[[microservices:CreateVirtualInvokes]]
+.Links methods on interfaces to corresponding methods in implem classes with a VIRTUAL_INVOKES rel
+[source,cypher,role=concept,requiresConcepts=""]
+----
+MATCH (itf:Interface)<-[:IMPLEMENTS]-(impl:Type)
+MATCH (itf)-[:DECLARES]->(m1:Method)
+MATCH (impl)-[:DECLARES]->(m2:Method)
+WHERE itf.fqn STARTS WITH 'com.piggy'
+AND m1.signature = m2.signature
+MERGE (m1)-[:VIRTUAL_INVOKES]-(m2)
+RETURN m1.signature, m2.signature
+----
+
+=== Entity analysis
+
+[[microservices:MarkMongoEntities]]
+.Applies `Entity` and `MongoDb` labels on mongo entities, adds the `collectionName` on the entity
+[source,cypher,role=concept,requiresConcepts="microservices:CreateVirtualInvokes"]
+----
+MATCH (entity:Type)-[:ANNOTATED_BY]->(ann:Annotation)
+MATCH (ann)-[:OF_TYPE]-(:Type{fqn:'org.springframework.data.mongodb.core.mapping.Document'})
+MATCH (ann)-[:HAS]->(collection:Value{name:"collection"})
+SET entity:Entity:MongoDb
+SET entity.collectionName=collection.value
+RETURN entity.fqn
+----
+
+_Which collections are used by service?_
+
+[source,cypher]
+----
+MATCH (entity:MongoDb:Class)--(a:Artifact)
+RETURN entity.fqn as class, entity.collectionName as collection, a.serviceName as usedBy
+ORDER by collection
+----
+
+_Endpoints using repository methods_
+
+[source,cypher]
+----
+MATCH p=(ep:Endpoint)-[:INVOKES|VIRTUAL_INVOKES|INVOKES_REMOTE*]->(m)<--(r:Repository)
+RETURN r.name, m.signature, collect(ep.method +' '+ ep.fullUrl) as usedBy
+ORDER BY r.name
+----
+
+[source,cypher]
+----
+MATCH p=(ep:Endpoint)-[:INVOKES|VIRTUAL_INVOKES*..10]->(m)<--(r:Repository)
+RETURN ep.fullUrl, ep.method, collect(r.name+'::'+m.signature)
+ORDER BY ep.fullUrl
+----
+
+[source,cypher]
+----
+MATCH p=(ep:Endpoint)-[:INVOKES|VIRTUAL_INVOKES*..10]->(m)<--(r:Repository)
+RETURN r.name, m.signature, collect(ep.method +' '+ ep.fullUrl) as endpoints
+ORDER BY r.name
+----
+
+=== Fallbacks
+
+_Do my HTTP clients declare fallbacks?_
+
+[source,cypher]
+----
+MATCH (client:Interface)-[:ANNOTATED_BY]->(a)-[:OF_TYPE]->(t:Type{fqn:"org.springframework.cloud.openfeign.FeignClient"})
+OPTIONAL MATCH (a)-[:HAS]-(v:Value{name:'fallback'})--(fb:Type)
+RETURN client.fqn as client, fb.fqn as fallback
+----
+
+
+=== Documentation
+
+Let's add some sample documentation to the application (it has no doc out of the box)
+
+`cp test-files/api-docs.yml PiggyMetrics/statistics-service/src/main/resources`
+
+and rebuild the services and rescan the app as done before
+
+Now we can check if my services have some documentation
+
+_Do the services have api specifications?_
+
+[source,cypher]
+----
+MATCH (a:Artifact)
+OPTIONAL MATCH (a)-[:CONTAINS]->(f:File)--(doc:Document:YAML)--(key:Key{name:'openapi'})
+RETURN distinct a.serviceName, f.fileName
+----
+
+_Extract endpoints and parameters from apidoc_
+
+[source,cypher]
+----
+MATCH (a:Artifact)-[:CONTAINS]->(f:File)--(doc:Document:YAML)--(key:Key{name:'openapi'})
+MATCH (doc)-->(:Key{name:'paths'})-->(path:Key)--(method:Key)
+OPTIONAL MATCH (method)-[*2]-(:Key{name:'name'})--(val:Value)
+RETURN path.name, method.name, collect(val.value) as params
+----
+
+_Get the controller parameters and return values_
+
+[source,cypher]
+----
+MATCH (ep:Endpoint)-[:RETURNS]->(returnType:Type)
+OPTIONAL MATCH (ep)-[:HAS]->(param:Parameter)-[:ANNOTATED_BY]->(:Annotation)
+OPTIONAL MATCH (param)-[:OF_TYPE]->(type:Type)
+RETURN ep.fullUrl, ep.method, count(param), collect(type.name)
+----
+
+
+=== Export as GraphML
+
+[[dependencyReport.graphml]]
+.Creates a GraphML report for artifact dependencies.
+[source,cypher,role=concept,requiresConcepts="microservices:LinkClientsAndEndpoints"]
+----
+MATCH (source:Artifact)-[*]->(c:FeignClient)
+MATCH (c)-[:INVOKES_REMOTE]->(:Endpoint)<-[*]-(target:Artifact)
+RETURN distinct source,
+    { role: "relationship", type: "DEPENDS_ON",
+        startNode: source, endNode: target, properties: {test: "blah"}
+    } as rel, target
+----
+
